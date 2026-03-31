@@ -1,5 +1,5 @@
 :root,
-html[data-theme='light'] {
+html[data-theme="light"] {
   --text: #6b6375;
   --text-h: #08060d;
   --bg: #fff;
@@ -9,11 +9,11 @@ html[data-theme='light'] {
   --accent-bg: rgba(170, 59, 255, 0.1);
   --accent-border: rgba(170, 59, 255, 0.5);
   --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  --shadow: rgba(0, 0, 0, 0.1) 0 10px 15px -3px,
+    rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
 }
 
-html[data-theme='dark'] {
+html[data-theme="dark"] {
   color-scheme: dark;
   --text: #9ca3af;
   --text-h: #f3f4f6;
@@ -24,18 +24,25 @@ html[data-theme='dark'] {
   --accent-bg: rgba(192, 132, 252, 0.12);
   --accent-border: rgba(192, 132, 252, 0.55);
   --social-bg: rgba(40, 42, 52, 0.65);
-  --shadow:
-    rgba(0, 0, 0, 0.45) 0 10px 15px -3px, rgba(0, 0, 0, 0.3) 0 4px 6px -2px;
+  --shadow: rgba(0, 0, 0, 0.45) 0 10px 15px -3px,
+    rgba(0, 0, 0, 0.3) 0 4px 6px -2px;
 }
 
-html[data-theme='light'] {
+html[data-theme="light"] {
   color-scheme: light;
 }
 
 :root {
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --sans: system-ui, "Segoe UI", Roboto, sans-serif;
+  --heading: system-ui, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
+
+  /* Custom cursor: single hollow frame (L-corners only; transparent center) */
+  --cursor-frame-w: 32px;
+  --cursor-frame-h: 24px;
+  --cursor-corner: 8px;
+  --cursor-stroke: 1.5px;
+  --cursor-frame-color: #0a0a0a;
 
   font: 18px/145% var(--sans);
   letter-spacing: 0.18px;
@@ -51,7 +58,7 @@ html[data-theme='light'] {
   }
 }
 
-html[data-theme='dark'] #social .button-icon {
+html[data-theme="dark"] #social .button-icon {
   filter: invert(1) brightness(2);
 }
 
@@ -107,4 +114,75 @@ code {
   line-height: 135%;
   padding: 4px 8px;
   background: var(--code-bg);
+}
+
+/* Single pointer frame: L-corners only; expands on node hover (Cursor.tsx) */
+.cursor-frame {
+  z-index: 999;
+  pointer-events: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  box-sizing: border-box;
+  width: var(--cursor-frame-w);
+  height: var(--cursor-frame-h);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  border-radius: 0;
+  background-color: transparent;
+  background-repeat: no-repeat;
+  transition:
+    opacity 0.15s ease-in-out,
+    transform 0.15s ease-in-out,
+    min-width 0.36s cubic-bezier(0.22, 0.9, 0.28, 1),
+    max-width 0.36s cubic-bezier(0.22, 0.9, 0.28, 1),
+    padding 0.36s cubic-bezier(0.22, 0.9, 0.28, 1),
+    width 0.36s cubic-bezier(0.22, 0.9, 0.28, 1),
+    height 0.36s cubic-bezier(0.22, 0.9, 0.28, 1),
+    background-size 0.36s cubic-bezier(0.22, 0.9, 0.28, 1);
+  /* Eight segments: L-shaped corners (transparent interior) */
+  background-image: linear-gradient(
+      var(--cursor-frame-color),
+      var(--cursor-frame-color)
+    ),
+    linear-gradient(var(--cursor-frame-color), var(--cursor-frame-color)),
+    linear-gradient(var(--cursor-frame-color), var(--cursor-frame-color)),
+    linear-gradient(var(--cursor-frame-color), var(--cursor-frame-color)),
+    linear-gradient(var(--cursor-frame-color), var(--cursor-frame-color)),
+    linear-gradient(var(--cursor-frame-color), var(--cursor-frame-color)),
+    linear-gradient(var(--cursor-frame-color), var(--cursor-frame-color)),
+    linear-gradient(var(--cursor-frame-color), var(--cursor-frame-color));
+  background-size: var(--cursor-corner) var(--cursor-stroke),
+    var(--cursor-stroke) var(--cursor-corner),
+    var(--cursor-corner) var(--cursor-stroke),
+    var(--cursor-stroke) var(--cursor-corner),
+    var(--cursor-corner) var(--cursor-stroke),
+    var(--cursor-stroke) var(--cursor-corner),
+    var(--cursor-corner) var(--cursor-stroke),
+    var(--cursor-stroke) var(--cursor-corner);
+  background-position: left top, left top, right top, right top, left bottom,
+    left bottom, right bottom, right bottom;
+}
+
+.cursor-frame--expanded {
+  width: auto;
+  height: auto;
+  min-width: min(280px, calc(100vw - 48px));
+  max-width: min(360px, calc(100vw - 48px));
+  padding: 12px 14px;
+  --cursor-corner: 11px;
+  --cursor-stroke: 1.75px;
+}
+
+.cursor-hover-title {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+  color: var(--text-h);
+  text-align: left;
+  word-break: break-word;
 }

@@ -35,6 +35,27 @@
   align-items: center;
 }
 
+.topbarPanelToggle {
+  min-width: 2.5rem;
+  padding: 8px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.topbarPanelToggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.topbarPanelToggleIcon {
+  display: block;
+}
+
+.themeToggle {
+  min-width: 4.5rem;
+}
+
 .button {
   appearance: none;
   border: 1px solid var(--border);
@@ -44,7 +65,7 @@
   border-radius: 10px;
   font-size: 14px;
   text-decoration: none;
-  cursor: pointer;
+  /* cursor: pointer; */
   transition: box-shadow 0.2s, transform 0.02s ease-in;
 }
 
@@ -114,7 +135,8 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  transition: box-shadow 0.15s ease, background 0.15s ease;
+  background: var(--bg);
+  cursor: none;
 }
 
 .graphCanvas.graphCanvasDrag {
@@ -131,6 +153,8 @@
   min-height: 320px;
   position: relative;
   width: 100%;
+  overscroll-behavior: contain;
+  touch-action: none;
 }
 
 .graphCanvas > .graphCanvasInner {
@@ -142,7 +166,7 @@
   position: absolute;
   right: 12px;
   bottom: 12px;
-  z-index: 7;
+  z-index: 10;
   min-width: 160px;
   max-width: min(240px, calc(100vw - 32px));
   padding: 8px 10px;
@@ -151,6 +175,7 @@
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
   pointer-events: auto;
+  cursor: default;
 }
 
 .graphZoomRow {
@@ -201,20 +226,70 @@
   cursor: grabbing;
 }
 
-.graphOverlayLayer {
+/* Paper detail: slides in from the right over the graph (Graph3D) */
+.graphDetailPanel {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
   z-index: 8;
+  box-sizing: border-box;
+  width: min(400px, 46vw);
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px;
+  border-left: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 97%, var(--social-bg));
+  box-shadow: -12px 0 36px rgba(0, 0, 0, 0.14);
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.22, 0.9, 0.28, 1);
   pointer-events: none;
-  overflow: visible;
+  overflow: hidden;
 }
 
-.graphNodeOverlayWrap {
-  position: absolute;
-  left: 0;
-  top: 0;
-  max-width: min(380px, calc(100vw - 48px));
-  will-change: transform, opacity;
+.graphDetailPanel--open {
+  transform: translateX(0);
+  pointer-events: auto;
+  overflow-y: auto;
+}
+
+.graphDetailPanelClose {
+  align-self: flex-end;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin: -2px -6px 10px 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 90%, var(--social-bg));
+  color: var(--text-h);
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.graphDetailPanelClose:hover {
+  box-shadow: var(--shadow);
+  background: color-mix(in srgb, var(--bg) 82%, var(--social-bg));
+}
+
+.graphDetailPanelClose:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 2px;
+}
+
+.graphDetailPanelCloseIcon {
+  display: block;
+}
+
+@media (max-width: 1024px) {
+  .graphDetailPanel {
+    width: min(400px, 100%);
+  }
 }
 
 .nodeOverlayCard {
@@ -223,8 +298,9 @@
   background: color-mix(in srgb, var(--bg) 94%, var(--social-bg));
   border-radius: 14px;
   padding: 12px 14px;
-  box-shadow: var(--shadow);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
   text-align: left;
+  flex: 0 0 auto;
 }
 
 .nodeOverlayTitleInput {
@@ -347,6 +423,113 @@
   font-family: var(--sans);
   font-size: 13px;
   line-height: 1.35;
+}
+
+/* Single viewfinder: shrinks to cursor, expands to title on node hover (Graph3D) */
+.graphViewfinder--dark {
+  --vf-stroke: #ffffff;
+  --vf-text: #ffffff;
+}
+
+.graphViewfinder--light {
+  --vf-stroke: #1f2937;
+  --vf-text: #111827;
+}
+
+.graphViewfinder {
+  position: absolute;
+  z-index: 12;
+  pointer-events: none;
+  box-sizing: border-box;
+  /* left/top driven by JS each frame — no transition (smooth follow is in Graph3D) */
+  transition: width 0.52s cubic-bezier(0.22, 0.9, 0.28, 1),
+    min-width 0.52s cubic-bezier(0.22, 0.9, 0.28, 1),
+    max-width 0.52s cubic-bezier(0.22, 0.9, 0.28, 1),
+    height 0.52s cubic-bezier(0.22, 0.9, 0.28, 1),
+    padding 0.52s cubic-bezier(0.22, 0.9, 0.28, 1),
+    transform 0.52s cubic-bezier(0.22, 0.9, 0.28, 1);
+}
+
+.graphViewfinder:not(.graphViewfinder--expanded) {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+}
+
+.graphViewfinder--expanded {
+  min-width: min(280px, calc(100vw - 48px));
+  max-width: min(360px, calc(100vw - 48px));
+  width: max-content;
+  height: auto;
+  padding: 14px 18px;
+  transform: translate(-50%, calc(-100% - 14px));
+}
+
+.graphViewfinderCorner {
+  position: absolute;
+  pointer-events: none;
+  border-color: var(--vf-stroke);
+  border-style: solid;
+  transition: width 0.48s cubic-bezier(0.22, 0.9, 0.28, 1),
+    height 0.48s cubic-bezier(0.22, 0.9, 0.28, 1);
+}
+
+.graphViewfinder:not(.graphViewfinder--expanded) .graphViewfinderCorner {
+  width: 8px;
+  height: 8px;
+}
+
+.graphViewfinder--expanded .graphViewfinderCorner {
+  width: 14px;
+  height: 14px;
+}
+
+.graphViewfinderCorner--tl {
+  top: 0;
+  left: 0;
+  border-width: 2px 0 0 2px;
+}
+
+.graphViewfinderCorner--tr {
+  top: 0;
+  right: 0;
+  border-width: 2px 2px 0 0;
+}
+
+.graphViewfinderCorner--bl {
+  bottom: 0;
+  left: 0;
+  border-width: 0 0 2px 2px;
+}
+
+.graphViewfinderCorner--br {
+  bottom: 0;
+  right: 0;
+  border-width: 0 2px 2px 0;
+}
+
+.graphViewfinderTitle {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+  color: var(--vf-text);
+  text-align: left;
+  word-break: break-word;
+  opacity: 0;
+  max-height: 0;
+  overflow: hidden;
+  transition: opacity 0.38s cubic-bezier(0.22, 0.9, 0.28, 1),
+    max-height 0.48s cubic-bezier(0.22, 0.9, 0.28, 1);
+}
+
+.graphViewfinderTitle--visible {
+  opacity: 1;
+  max-height: 240px;
 }
 
 @media (max-width: 1024px) {

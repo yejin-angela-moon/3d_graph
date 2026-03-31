@@ -1,8 +1,6 @@
 import ForceGraph3D from "react-force-graph-3d";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import type { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import type { PaperNode } from "../types/graph";
 import { GraphNodeOverlay } from "./GraphNodeOverlay";
 import type { GraphViewLink, GraphViewNode } from "./graphViewTypes";
@@ -21,6 +19,12 @@ export type Graph3DProps = {
   /** Keep hover preview while moving pointer from node onto the overlay */
   onOverlayPointerEnter?: () => void;
   onOverlayPointerLeave?: () => void;
+  /** When true and a paper is selected, the right detail panel is slid open. */
+  detailPanelOpen: boolean;
+  /** Dismiss selection and close the detail panel. */
+  onCloseDetailPanel?: () => void;
+  /** UI theme — graph canvas and link contrast */
+  theme?: "light" | "dark";
 };
 
 /** Invisible sphere for easier raycast hit (bigger hitbox than visible mesh). */
@@ -76,7 +80,7 @@ function nodeRadius(node: GraphViewNode): number {
   return 2.6 + Math.sqrt(Math.max(0, node.val)) * 1.05;
 }
 
-/** Glow: emissive cores + UnrealBloomPass; scene lights keep shading (not flat discs). */
+/** Flat unlit spheres (no scene lighting). User = light green, cited references = light red. */
 function makeNodeObject(node: GraphViewNode): THREE.Object3D {
   const group = new THREE.Group();
   const r = nodeRadius(node);
@@ -93,35 +97,20 @@ function makeNodeObject(node: GraphViewNode): THREE.Object3D {
 
   const sphereGeom = new THREE.SphereGeometry(r, 40, 32);
 
-  const userColor = 0xc084fc;
-  const refColor = 0x22d3ee;
+  const userColor = 0xa7f3d0;
+  const refColor = 0xfecaca;
 
   if (node.source === "user") {
     const mesh = new THREE.Mesh(
       sphereGeom,
-      new THREE.MeshStandardMaterial({
-        color: userColor,
-        emissive: userColor,
-        emissiveIntensity: 0.95,
-        metalness: 0.18,
-        roughness: 0.28,
-      }),
+      new THREE.MeshBasicMaterial({ color: userColor }),
     );
     mesh.renderOrder = 2;
     group.add(mesh);
   } else {
     const mesh = new THREE.Mesh(
       sphereGeom,
-      new THREE.MeshStandardMaterial({
-        color: refColor,
-        emissive: refColor,
-        emissiveIntensity: 1.15,
-        metalness: 0.1,
-        roughness: 0.26,
-        transparent: true,
-        opacity: 0.9,
-        depthWrite: true,
-      }),
+      new THREE.MeshBasicMaterial({ color: refColor }),
     );
     mesh.renderOrder = 2;
     group.add(mesh);
@@ -188,11 +177,6 @@ export function Graph3D(props: Graph3DProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [dims, setDims] = useState({ width: 600, height: 500 });
   const fgRef = useRef<any>(null);
-  const graphDataRef = useRef<{
-    nodes: GraphViewNode[];
-    links: GraphViewLink[];
-  }>({ nodes: [], links: [] });
-  const overlayWrapRef = useRef<HTMLDivElement>(null);
   const [zoomPct, setZoomPct] = useState(100);
   const zoomBaseDistanceRef = useRef<number | null>(null);
   const [zoomSliderPct, setZoomSliderPct] = useState(50);
@@ -215,6 +199,17 @@ export function Graph3D(props: Graph3DProps) {
     return () => ro.disconnect();
   }, []);
 
+  // Keep wheel/trackpad zoom working over the graph (avoid page scroll stealing the event).
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
   const graphData = useMemo(() => {
     const anchors = layoutDisconnectedComponents(props.nodes, props.links);
     const nodesWithPos = props.nodes.map((n) => ({
@@ -226,78 +221,23 @@ export function Graph3D(props: Graph3DProps) {
     return { nodes: nodesWithPos, links: props.links };
   }, [props.links, props.nodes]);
 
-  graphDataRef.current = graphData;
-
-  const graphLights = useMemo(() => {
-    const ambient = new THREE.AmbientLight(0xb8c4d8, 0.38);
-    const key = new THREE.DirectionalLight(0xffffff, 1.05);
-    key.position.set(50, 88, 44);
-    const fill = new THREE.DirectionalLight(0xd8e4ff, 0.22);
-    fill.position.set(-65, 32, -22);
-    return [ambient, key, fill];
-  }, []);
-
+  /** No custom lights — flat MeshBasicMaterial nodes ignore lighting anyway. */
   useEffect(() => {
     let cancelled = false;
-    const applyLights = () => {
+    const clearLights = () => {
       if (cancelled) return;
       const fg = fgRef.current;
       if (!fg?.lights) {
-        requestAnimationFrame(applyLights);
+        requestAnimationFrame(clearLights);
         return;
       }
-      fg.lights(graphLights);
+      fg.lights([]);
     };
-    requestAnimationFrame(applyLights);
+    requestAnimationFrame(clearLights);
     return () => {
       cancelled = true;
     };
-  }, [graphLights]);
-
-  const bloomPassRef = useRef<UnrealBloomPass | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const tryAddBloom = () => {
-      if (cancelled) return;
-      const fg = fgRef.current;
-      if (!fg) {
-        requestAnimationFrame(tryAddBloom);
-        return;
-      }
-      const composer = fg.postProcessingComposer?.() as
-        | EffectComposer
-        | undefined;
-      if (!composer) {
-        requestAnimationFrame(tryAddBloom);
-        return;
-      }
-      if (bloomPassRef.current) return;
-
-      const renderer = fg.renderer() as THREE.WebGLRenderer;
-      renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.15;
-
-      const size = new THREE.Vector2();
-      renderer.getSize(size);
-      const bloom = new UnrealBloomPass(size, 1.05, 0.58, 0.48);
-      composer.addPass(bloom);
-      bloomPassRef.current = bloom;
-    };
-    requestAnimationFrame(tryAddBloom);
-    return () => {
-      cancelled = true;
-      const fg = fgRef.current;
-      const composer = fg?.postProcessingComposer?.() as
-        | EffectComposer
-        | undefined;
-      if (composer && bloomPassRef.current) {
-        composer.removePass(bloomPassRef.current);
-        bloomPassRef.current.dispose();
-        bloomPassRef.current = null;
-      }
-    };
-  }, [dims.width, dims.height]);
+  }, []);
 
   useEffect(() => {
     zoomBaseDistanceRef.current = null;
@@ -338,9 +278,6 @@ export function Graph3D(props: Graph3DProps) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  const overlayNodeIdRef = useRef<string | null>(null);
-  overlayNodeIdRef.current = props.overlayNodeId;
-
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;
@@ -368,87 +305,70 @@ export function Graph3D(props: Graph3DProps) {
     return () => window.clearTimeout(t);
   }, [dims.width, dims.height, graphData.nodes.length]);
 
-  /**
-   * Do not use onEngineTick for overlay position: after the force simulation cools down,
-   * the engine stops calling onEngineTick, so the card would never show until another
-   * tick (e.g. a second click). Drive position from a RAF loop while a node is selected.
-   */
   useEffect(() => {
-    if (!props.overlayNodeId) {
-      const el = overlayWrapRef.current;
-      if (el) {
-        el.style.opacity = "0";
-        el.style.pointerEvents = "none";
-      }
-      return;
-    }
-
-    const updateOverlayPosition = () => {
-      const id = overlayNodeIdRef.current;
+    let cancelled = false;
+    const apply = () => {
+      if (cancelled) return;
       const fg = fgRef.current;
-      const el = overlayWrapRef.current;
-      if (!id || !fg || !el) {
-        if (el) {
-          el.style.opacity = "0";
-          el.style.pointerEvents = "none";
-        }
+      const c = fg?.controls?.();
+      if (!c) {
+        requestAnimationFrame(apply);
         return;
       }
-      const node = graphDataRef.current.nodes.find((n) => n.id === id);
-      if (!node || node.x == null || node.y == null || node.z == null) {
-        el.style.opacity = "0";
-        el.style.pointerEvents = "none";
-        return;
-      }
-      const c = fg.graph2ScreenCoords(node.x, node.y, node.z);
-      const pad = 14;
-      el.style.opacity = "1";
-      el.style.pointerEvents = "auto";
-      el.style.transform = `translate(${c.x + pad}px, ${c.y}px)`;
+      const controls = c as any;
+      controls.enableZoom = true;
+      controls.enableRotate = true;
+      controls.enablePan = true;
+      controls.zoomSpeed = 1.0;
+      controls.rotateSpeed = 0.7;
+      controls.panSpeed = 0.7;
     };
-
-    let raf = 0;
-    const loop = () => {
-      updateOverlayPosition();
-      raf = requestAnimationFrame(loop);
-    };
-    updateOverlayPosition();
-    raf = requestAnimationFrame(loop);
+    requestAnimationFrame(apply);
     return () => {
-      cancelAnimationFrame(raf);
-      const el = overlayWrapRef.current;
-      if (el) {
-        el.style.opacity = "0";
-        el.style.pointerEvents = "none";
-      }
+      cancelled = true;
     };
-  }, [props.overlayNodeId]);
+  }, [dims.width, dims.height]);
+
+  useEffect(() => {
+    fgRef.current?.refresh?.();
+  }, [props.theme]);
+
+  const isDark = (props.theme ?? "dark") === "dark";
+  const linkStroke = isDark ? "#ffffff" : "#6b7280";
 
   return (
     <div
       ref={wrapRef}
       className="graphCanvasInner"
-      style={{ width: "100%", height: "100%", minHeight: 320 }}
+      style={{
+        width: "100%",
+        height: "100%",
+        minHeight: 320,
+      }}
     >
       <ForceGraph3D
         ref={fgRef}
         width={dims.width}
         height={dims.height}
         graphData={graphData}
-        backgroundColor="#000000"
+        backgroundColor={
+          (props.theme ?? "dark") === "dark" ? "#121318" : "#ffffff"
+        }
         controlType="orbit"
         enableNavigationControls
+        enableNodeDrag={false}
         nodeLabel={() => ""}
         nodeThreeObject={(n: unknown) => makeNodeObject(n as GraphViewNode)}
         nodeThreeObjectExtend={false}
         linkDirectionalArrowLength={3.5}
         linkDirectionalArrowRelPos={1}
         linkWidth={0.6}
-        linkOpacity={0.45}
-        linkColor={() => "#8b92a3"}
-        onNodeHover={(n: unknown) =>
-          props.onNodeHover((n as GraphViewNode) ?? null)
-        }
+        linkOpacity={isDark ? 0.55 : 0.45}
+        linkColor={() => linkStroke}
+        linkDirectionalArrowColor={() => linkStroke}
+        onNodeHover={(n: unknown) => {
+          props.onNodeHover((n as GraphViewNode) ?? null);
+        }}
         onNodeClick={(n: unknown) => props.onNodeClick(n as GraphViewNode)}
         onBackgroundClick={() => props.onBackgroundClick?.()}
         enablePointerInteraction
@@ -488,30 +408,29 @@ export function Graph3D(props: Graph3DProps) {
           </div>
         </label>
       </div>
-      <div className="graphOverlayLayer" aria-hidden={!props.overlayNodeId}>
-        <div
-          ref={overlayWrapRef}
-          className="graphNodeOverlayWrap"
-          style={{ opacity: 0 }}
-          onPointerEnter={() => props.onOverlayPointerEnter?.()}
-          onPointerLeave={() => props.onOverlayPointerLeave?.()}
-        >
-          {props.overlayPaper && props.overlayNodeId ? (
-            <GraphNodeOverlay
-              paper={props.overlayPaper}
-              onRead={(read) =>
-                props.onOverlayRead(props.overlayPaper!.id, read)
-              }
-              onNotes={(notes) =>
-                props.onOverlayNotes(props.overlayPaper!.id, notes)
-              }
-              onTitle={(title) =>
-                props.onOverlayTitle(props.overlayPaper!.id, title)
-              }
-            />
-          ) : null}
-        </div>
-      </div>
+      <aside
+        className={
+          props.overlayNodeId && props.detailPanelOpen
+            ? "graphDetailPanel graphDetailPanel--open"
+            : "graphDetailPanel"
+        }
+        aria-hidden={!props.overlayNodeId}
+        onPointerEnter={() => props.onOverlayPointerEnter?.()}
+        onPointerLeave={() => props.onOverlayPointerLeave?.()}
+      >
+        {props.overlayPaper && props.overlayNodeId ? (
+          <GraphNodeOverlay
+            paper={props.overlayPaper}
+            onRead={(read) => props.onOverlayRead(props.overlayPaper!.id, read)}
+            onNotes={(notes) =>
+              props.onOverlayNotes(props.overlayPaper!.id, notes)
+            }
+            onTitle={(title) =>
+              props.onOverlayTitle(props.overlayPaper!.id, title)
+            }
+          />
+        ) : null}
+      </aside>
     </div>
   );
 }

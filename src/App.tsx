@@ -7,27 +7,42 @@ import type { GraphViewNode } from "./graph/graphViewTypes";
 import { parsePdfToCitations } from "./pdf/parsePdfToCitations";
 import type { ParsePdfToCitationsResult } from "./pdf/parsePdfToCitations";
 import { foldIngestParsedPdfs } from "./store/ingestPdf";
+import {
+  readThemeFromDom,
+  setTheme as persistTheme,
+  type Theme,
+} from "./theme";
+import Cursor from "./graph/Cursor";
+
 function App() {
+  const [theme, setTheme] = useState<Theme>(() => readThemeFromDom());
   const { state, actions, loading } = useGraphStore();
   const [pinnedId, setPinnedId] = useState<string | null>(null);
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
   /** Keeps the same card visible while pointer moves from a node onto the overlay */
   const [stickyOverlayId, setStickyOverlayId] = useState<string | null>(null);
   const [parseBusy, setParseBusy] = useState(false);
   const [parseStatus, setParseStatus] = useState<string>("");
   const [graphDragOver, setGraphDragOver] = useState(false);
+  const [hoveredNodeTitle, setHoveredNodeTitle] = useState<string | null>(null);
 
   const hoverLeaveTimerRef = useRef<number>(0);
   const lastOverlayIdRef = useRef<string | null>(null);
+  const graphSectionRef = useRef<HTMLElement | null>(null);
+  const [pointerInGraph, setPointerInGraph] = useState(false);
+  /** Right paper panel: toggled from top bar; opens automatically when a node is selected. */
+  const [detailPanelOpen, setDetailPanelOpen] = useState(true);
 
-  /** Hover preview first; then pinned click; sticky while pointer is on the overlay */
-  const overlayNodeId = hoveredId ?? pinnedId ?? stickyOverlayId;
+  const overlayNodeId = pinnedId ?? stickyOverlayId;
   const overlayPaper = overlayNodeId
     ? state.nodes[overlayNodeId] ?? null
     : null;
 
   useEffect(() => {
     if (overlayNodeId) lastOverlayIdRef.current = overlayNodeId;
+  }, [overlayNodeId]);
+
+  useEffect(() => {
+    if (overlayNodeId) setDetailPanelOpen(true);
   }, [overlayNodeId]);
 
   useEffect(() => () => window.clearTimeout(hoverLeaveTimerRef.current), []);
@@ -144,11 +159,78 @@ function App() {
             {loading
               ? "Loading…"
               : parseBusy
-                ? parseStatus || "Parsing…"
-                : parseStatus || `${nodeCount} nodes · ${linkCount} citations`}
+              ? parseStatus || "Parsing…"
+              : parseStatus || `${nodeCount} nodes · ${linkCount} citations`}
           </div>
         </div>
         <div className="actions">
+          <button
+            type="button"
+            className="button topbarPanelToggle"
+            disabled={!overlayNodeId}
+            aria-pressed={!!overlayNodeId && detailPanelOpen}
+            aria-label={
+              !overlayNodeId
+                ? "Select a paper on the graph to use the panel"
+                : detailPanelOpen
+                  ? "Hide paper panel"
+                  : "Show paper panel"
+            }
+            title={
+              !overlayNodeId
+                ? "Select a paper first"
+                : detailPanelOpen
+                  ? "Hide paper panel"
+                  : "Show paper panel"
+            }
+            onClick={() => setDetailPanelOpen((open) => !open)}
+          >
+            <svg
+              className="topbarPanelToggleIcon"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden
+            >
+              <rect
+                x="3"
+                y="4"
+                width="18"
+                height="16"
+                rx="2.5"
+                stroke="currentColor"
+                strokeWidth="1.75"
+              />
+              <rect
+                x="14"
+                y="6"
+                width="5.5"
+                height="12"
+                rx="1"
+                fill="currentColor"
+                opacity="0.88"
+              />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="button themeToggle"
+            onClick={() => {
+              const next: Theme = theme === "light" ? "dark" : "light";
+              persistTheme(next);
+              setTheme(next);
+            }}
+            aria-pressed={theme === "dark"}
+            aria-label={
+              theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+            }
+            title={
+              theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+            }
+          >
+            {theme === "dark" ? "Light" : "Dark"}
+          </button>
           <label className="button">
             Choose PDFs
             <input
@@ -184,32 +266,52 @@ function App() {
 
       <main className="main">
         <section
-          className={`graphCanvas${graphDragOver ? " graphCanvasDrag" : ""}${parseBusy ? " graphCanvasBusy" : ""}`}
+          ref={graphSectionRef}
+          className={`graphCanvas${graphDragOver ? " graphCanvasDrag" : ""}${
+            parseBusy ? " graphCanvasBusy" : ""
+          }`}
           aria-label="Graph canvas — drop PDFs here"
+          onPointerEnter={() => setPointerInGraph(true)}
+          onPointerLeave={() => {
+            setPointerInGraph(false);
+            setHoveredNodeTitle(null);
+          }}
           onDragOver={onGraphDragOver}
           onDragLeave={onGraphDragLeave}
           onDrop={onGraphDrop}
         >
+          <Cursor
+            hoverTitle={hoveredNodeTitle}
+            graphActive={pointerInGraph}
+            containerRef={graphSectionRef}
+          />
           <Graph3D
+            theme={theme}
             nodes={graphData.nodes}
             links={graphData.links}
             onNodeHover={(n) => {
               if (n) {
                 window.clearTimeout(hoverLeaveTimerRef.current);
                 setStickyOverlayId(null);
-                setHoveredId(n.id);
+                if (overlayNodeId === n.id) {
+                  setHoveredNodeTitle(null);
+                } else {
+                  setHoveredNodeTitle((n.label ?? "").trim() || "Untitled");
+                }
               } else {
-                hoverLeaveTimerRef.current = window.setTimeout(
-                  () => setHoveredId(null),
-                  200,
-                );
+                setHoveredNodeTitle(null);
               }
             }}
             onNodeClick={(n) => setPinnedId(n.id)}
             onBackgroundClick={() => {
               window.clearTimeout(hoverLeaveTimerRef.current);
               setPinnedId(null);
-              setHoveredId(null);
+              setStickyOverlayId(null);
+            }}
+            detailPanelOpen={detailPanelOpen}
+            onCloseDetailPanel={() => {
+              window.clearTimeout(hoverLeaveTimerRef.current);
+              setPinnedId(null);
               setStickyOverlayId(null);
             }}
             onOverlayPointerEnter={() => {
@@ -219,7 +321,6 @@ function App() {
             }}
             onOverlayPointerLeave={() => {
               setStickyOverlayId(null);
-              setHoveredId(null);
             }}
             overlayNodeId={overlayNodeId}
             overlayPaper={overlayPaper}
