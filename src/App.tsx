@@ -32,18 +32,18 @@ function App() {
   /** Right paper panel: toggled from top bar; opens automatically when a node is selected. */
   const [detailPanelOpen, setDetailPanelOpen] = useState(true);
 
-  const overlayNodeId = pinnedId ?? stickyOverlayId;
-  const overlayPaper = overlayNodeId
-    ? state.nodes[overlayNodeId] ?? null
-    : null;
+  const selectedNodeId = pinnedId ?? stickyOverlayId;
+  const nodeSelected = selectedNodeId != null;
+  const overlayPaper =
+    selectedNodeId != null ? state.nodes[selectedNodeId] ?? null : null;
 
   useEffect(() => {
-    if (overlayNodeId) lastOverlayIdRef.current = overlayNodeId;
-  }, [overlayNodeId]);
+    if (selectedNodeId) lastOverlayIdRef.current = selectedNodeId;
+  }, [selectedNodeId]);
 
   useEffect(() => {
-    if (overlayNodeId) setDetailPanelOpen(true);
-  }, [overlayNodeId]);
+    if (selectedNodeId) setDetailPanelOpen(true);
+  }, [selectedNodeId]);
 
   useEffect(() => () => window.clearTimeout(hoverLeaveTimerRef.current), []);
 
@@ -167,21 +167,21 @@ function App() {
           <button
             type="button"
             className="button topbarPanelToggle"
-            disabled={!overlayNodeId}
-            aria-pressed={!!overlayNodeId && detailPanelOpen}
+            disabled={!nodeSelected}
+            aria-pressed={nodeSelected && detailPanelOpen}
             aria-label={
-              !overlayNodeId
+              !nodeSelected
                 ? "Select a paper on the graph to use the panel"
                 : detailPanelOpen
-                  ? "Hide paper panel"
-                  : "Show paper panel"
+                ? "Hide paper panel"
+                : "Show paper panel"
             }
             title={
-              !overlayNodeId
+              !nodeSelected
                 ? "Select a paper first"
                 : detailPanelOpen
-                  ? "Hide paper panel"
-                  : "Show paper panel"
+                ? "Hide paper panel"
+                : "Show paper panel"
             }
             onClick={() => setDetailPanelOpen((open) => !open)}
           >
@@ -293,11 +293,7 @@ function App() {
               if (n) {
                 window.clearTimeout(hoverLeaveTimerRef.current);
                 setStickyOverlayId(null);
-                if (overlayNodeId === n.id) {
-                  setHoveredNodeTitle(null);
-                } else {
-                  setHoveredNodeTitle((n.label ?? "").trim() || "Untitled");
-                }
+                setHoveredNodeTitle((n.label ?? "").trim() || "Untitled");
               } else {
                 setHoveredNodeTitle(null);
               }
@@ -322,7 +318,7 @@ function App() {
             onOverlayPointerLeave={() => {
               setStickyOverlayId(null);
             }}
-            overlayNodeId={overlayNodeId}
+            selectedNodeId={selectedNodeId}
             overlayPaper={overlayPaper}
             onOverlayRead={(id, read) => actions.setRead(id, read)}
             onOverlayNotes={(id, notes) => actions.setNotes(id, notes)}

@@ -21,16 +21,23 @@ export default function Cursor({
   hoverTitleRef.current = hoverTitle;
   graphActiveRef.current = graphActive;
 
+  function isOverGraphDetailPanel(clientX: number, clientY: number): boolean {
+    const hit = document.elementFromPoint(clientX, clientY);
+    return !!hit?.closest?.(".graphDetailPanel");
+  }
+
   const onMouseMove = (event: MouseEvent) => {
     positionFrame(event);
   };
-  const onMouseDown = () => {
-    if (!graphActiveRef.current) return;
+  const onMouseDown = (e: MouseEvent) => {
+    if (!graphActiveRef.current || isOverGraphDetailPanel(e.clientX, e.clientY))
+      return;
     cursorEnlarged.current = true;
     toggleCursorSize();
   };
-  const onMouseUp = () => {
-    if (!graphActiveRef.current) return;
+  const onMouseUp = (e: MouseEvent) => {
+    if (!graphActiveRef.current || isOverGraphDetailPanel(e.clientX, e.clientY))
+      return;
     cursorEnlarged.current = false;
     toggleCursorSize();
   };
@@ -63,6 +70,10 @@ export default function Cursor({
       el.style.opacity = "0";
       return;
     }
+    if (isOverGraphDetailPanel(e.clientX, e.clientY)) {
+      el.style.opacity = "0";
+      return;
+    }
     const r = root.getBoundingClientRect();
     const x = e.clientX - r.left;
     const y = e.clientY - r.top;
@@ -83,13 +94,14 @@ export default function Cursor({
   }
 
   function handleLinks() {
-    document.querySelectorAll("a").forEach((el) => {
-      el.addEventListener("mouseover", () => {
+    document.querySelectorAll("a").forEach((anchor) => {
+      if (anchor.closest(".graphDetailPanel")) return;
+      anchor.addEventListener("mouseover", () => {
         if (!graphActiveRef.current) return;
         cursorEnlarged.current = true;
         toggleCursorSize();
       });
-      el.addEventListener("mouseout", () => {
+      anchor.addEventListener("mouseout", () => {
         if (!graphActiveRef.current) return;
         cursorEnlarged.current = false;
         toggleCursorSize();

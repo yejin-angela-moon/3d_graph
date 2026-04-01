@@ -246,12 +246,19 @@
   transition: transform 0.3s cubic-bezier(0.22, 0.9, 0.28, 1);
   pointer-events: none;
   overflow: hidden;
+  /* Override graph canvas cursor: none — use normal cursor in the panel */
+  cursor: default;
+}
+
+.graphDetailPanel a {
+  cursor: pointer;
 }
 
 .graphDetailPanel--open {
   transform: translateX(0);
   pointer-events: auto;
   overflow-y: auto;
+  cursor: default;
 }
 
 .graphDetailPanelClose {
