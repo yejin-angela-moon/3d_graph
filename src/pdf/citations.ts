@@ -1,184 +1,200 @@
-import type { PaperNode } from '../types/graph'
-import { arxivAbsUrlFromId, normalizeArxivId } from '../types/graph'
+import * as pdfjsLib from "pdfjs-dist";
+import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
-export type ReferenceParseResult = {
-  referencesText: string
-  referenceEntries: string[]
-  arxivIds: string[]
-  arxivIdsByRef: Array<{ ref: string; arxivIds: string[] }>
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+
+export type PaperNodeId = string;
+
+type ExtractReferencesOptions = {
+  maxHeadingScanLines?: number;
+  minReferenceSignalsAfterHeading?: number;
+};
+
+const DEFAULT_OPTIONS: Required<ExtractReferencesOptions> = {
+  maxHeadingScanLines: 400,
+  minReferenceSignalsAfterHeading: 2,
+};
+
+const REFERENCE_HEADING_PATTERNS: RegExp[] = [
+  /^\s*references\s*$/i,
+  /^\s*bibliography\s*$/i,
+  /^\s*works cited\s*$/i,
+  /^\s*\d+\.?\s*references\s*$/i,
+  /^\s*\d+\.?\s*bibliography\s*$/i,
+];
+
+const NEXT_SECTION_HEADING_PATTERNS: RegExp[] = [
+  /^\s*appendix\s*$/i,
+  /^\s*appendices\s*$/i,
+  /^\s*acknowledg(?:e)?ments?\s*$/i,
+  /^\s*author contributions?\s*$/i,
+  /^\s*funding\s*$/i,
+  /^\s*conflicts? of interest\s*$/i,
+  /^\s*supplementary materials?\s*$/i,
+  /^\s*supplemental materials?\s*$/i,
+  /^\s*additional results\s*$/i,
+  /^\s*implementation details\s*$/i,
+  /^\s*\d+\.?\s*appendix\s*$/i,
+];
+
+export async function extractReferencesTextFromPdfFile(
+  file: File,
+  options: ExtractReferencesOptions = {},
+): Promise<string | null> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+  const pages: string[] = [];
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const textContent = await page.getTextContent();
+
+    const pageText = textContent.items
+      .map((item) => ("str" in item ? item.str : ""))
+      .join(" ");
+
+    pages.push(pageText);
+  }
+
+  const fullText = normalizePdfText(pages.join("\n\n"));
+  return extractReferencesTextFromDocumentText(fullText, options);
 }
 
-/** Prefer newline/start before heading; PDF.js often concatenates "...text.References" with no newline */
-const REFERENCE_HEADING_RE = /(^|\n)\s*(references|bibliography)\s*(:|\n)/gi
+export function extractReferencesTextFromDocumentText(
+  fullText: string,
+  options: ExtractReferencesOptions = {},
+): string | null {
+  const mergedOptions = { ...DEFAULT_OPTIONS, ...options };
+  const normalized = normalizePdfText(fullText);
+  const lines = normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line, index, arr) => !(line === "" && arr[index - 1] === ""));
 
-/** Last-resort: heading as a word (handles inline "References [1]") */
-const REF_HEADING_INLINE_RE = /\b(references|bibliography|works\s+cited|literature\s+cited)\b/gi
+  const headingIndex = findReferencesHeadingTopDown(lines, mergedOptions);
+  if (headingIndex === -1) return null;
 
-const REF_ITEM_START_RE = /^\s*(\[\d+\]|\d+\.|\d+\))\s+/
+  const endIndex = findReferencesEnd(lines, headingIndex);
+  const referencesLines = lines.slice(headingIndex + 1, endIndex);
+  const cleaned = cleanupReferencesText(referencesLines.join("\n"));
 
-const ARXIV_URL_RE = /arxiv\.org\/abs\/(\d{4}\.\d{4,5}(?:v\d+)?)/gi
-const ARXIV_TAG_RE = /\barxiv\s*:\s*(\d{4}\.\d{4,5}(?:v\d+)?)\b/gi
-const ARXIV_PLAIN_ID_RE = /\b(\d{4}\.\d{4,5}(?:v\d+)?)\b/g
+  return cleaned.length > 0 ? cleaned : null;
+}
 
-export function findReferencesSection(fullText: string): string {
-  const m = [...fullText.matchAll(REFERENCE_HEADING_RE)].pop()
-  if (m && m.index != null) return fullText.slice(m.index).trim()
+function findReferencesHeadingTopDown(
+  lines: string[],
+  options: Required<ExtractReferencesOptions>,
+): number {
+  const limit = Math.min(lines.length, options.maxHeadingScanLines);
 
-  // Inline "…conclusion.References [1]" — no newline before the heading
-  let lastIdx = -1
-  for (const match of fullText.matchAll(REF_HEADING_INLINE_RE)) {
-    if (match.index != null) lastIdx = match.index
+  for (let i = 0; i < limit; i++) {
+    const line = lines[i];
+    if (!looksLikeReferenceHeading(line)) continue;
+    if (
+      !hasReferenceLikeContentAfter(
+        lines,
+        i,
+        options.minReferenceSignalsAfterHeading,
+      )
+    ) {
+      continue;
+    }
+    return i;
   }
-  if (lastIdx >= 0) return fullText.slice(lastIdx).trim()
 
-  // No heading found: use tail of document where numbered refs often appear
-  const tailStart = Math.max(0, fullText.length - 120_000)
-  const tail = fullText.slice(tailStart)
-  const lines = tail.split(/\r?\n/)
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    if (REF_ITEM_START_RE.test(line)) {
-      return lines.slice(i).join('\n').trim()
+  return -1;
+}
+
+function looksLikeReferenceHeading(line: string): boolean {
+  if (!line) return false;
+
+  if (!matchesAny(line, REFERENCE_HEADING_PATTERNS)) {
+    return false;
+  }
+
+  if (line.length > 40) {
+    return false;
+  }
+
+  return true;
+}
+
+function hasReferenceLikeContentAfter(
+  lines: string[],
+  headingIndex: number,
+  minSignals: number,
+): boolean {
+  const sampleLines = lines
+    .slice(headingIndex + 1, headingIndex + 18)
+    .filter((line) => line.length > 0);
+
+  if (sampleLines.length === 0) return false;
+
+  let signals = 0;
+
+  for (const line of sampleLines) {
+    if (looksLikeReferenceEntryFragment(line)) {
+      signals++;
     }
   }
-  return ''
+
+  return signals >= minSignals;
 }
 
-export function splitReferenceEntries(referencesText: string): string[] {
-  const lines = referencesText
-    .split(/\r?\n/)
-    .map((l) => l.trimEnd())
-    .filter((l) => l.trim().length > 0)
+function looksLikeReferenceEntryFragment(line: string): boolean {
+  let score = 0;
 
-  const entries: string[] = []
-  let current: string[] = []
+  if (/\b(19|20)\d{2}\b/.test(line)) score++;
+  if (/\bdoi\b/i.test(line)) score++;
+  if (/\barxiv\b/i.test(line)) score++;
+  if (/https?:\/\//i.test(line)) score++;
+  if (/\bet al\./i.test(line)) score++;
+  if (/\bpp?\.\s*\d+/i.test(line)) score++;
+  if (/\bvol\.\s*\d+/i.test(line)) score++;
+  if (/\bno\.\s*\d+/i.test(line)) score++;
+  if (/\bjournal\b/i.test(line)) score++;
+  if (/\bproceedings\b/i.test(line)) score++;
+  if (/\bconference\b/i.test(line)) score++;
+  if (/^[A-Z][A-Za-z'`-]+,\s+[A-Z]\./.test(line)) score++;
+  if (/^[A-Z][A-Za-z'`-]+,\s+[A-Z][a-z]+/.test(line)) score++;
 
-  for (const line of lines) {
-    const isStart = REF_ITEM_START_RE.test(line)
-    if (isStart && current.length > 0) {
-      entries.push(current.join(' ').replace(/\s+/g, ' ').trim())
-      current = []
+  return score >= 1;
+}
+
+function findReferencesEnd(lines: string[], headingIndex: number): number {
+  for (let i = headingIndex + 1; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (!line) continue;
+
+    if (matchesAny(line, NEXT_SECTION_HEADING_PATTERNS)) {
+      return i;
     }
-    current.push(line.trim())
-  }
-  if (current.length > 0) entries.push(current.join(' ').replace(/\s+/g, ' ').trim())
-
-  // Drop the heading line if it got included as the first entry.
-  if (entries.length > 0 && /^(references|bibliography)\b/i.test(entries[0])) {
-    entries.shift()
   }
 
-  if (entries.length === 0) {
-    const t = referencesText.trim()
-    if (!t) return []
-    const byBracket = t.split(/\n(?=\s*\[\d+\])/).map((s) => s.trim()).filter(Boolean)
-    if (byBracket.length > 1) return byBracket
-    const byNumber = t.split(/\n(?=\s*\d+\.\s)/).map((s) => s.trim()).filter(Boolean)
-    if (byNumber.length > 1) return byNumber
-    const paras = t.split(/\n\s*\n+/).map((s) => s.trim()).filter(Boolean)
-    if (paras.length > 1) return paras
-    if (t.length > 0) return [t]
-  }
-
-  // One giant block (PDF sometimes merges refs): split on [2] [3] … mid-line
-  if (entries.length === 1 && entries[0].length > 400) {
-    const byInlineNum = entries[0].split(/\s+(?=\[\d+\])/).map((s) => s.trim()).filter(Boolean)
-    if (byInlineNum.length > 1) return byInlineNum
-  }
-
-  return entries
+  return lines.length;
 }
 
-export function extractArxivIdsFromReference(ref: string): string[] {
-  const out = new Set<string>()
-  const add = (id: string) => out.add(normalizeArxivId(id))
-
-  for (const m of ref.matchAll(ARXIV_URL_RE)) add(m[1])
-  for (const m of ref.matchAll(ARXIV_TAG_RE)) add(m[1])
-
-  // Heuristic: only accept bare IDs if the ref mentions arXiv/preprint.
-  if (/\barxiv\b/i.test(ref) || /\bpreprint\b/i.test(ref)) {
-    for (const m of ref.matchAll(ARXIV_PLAIN_ID_RE)) add(m[1])
-  }
-
-  return [...out]
+function matchesAny(value: string, patterns: RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(value));
 }
 
-/**
- * Only accept citations that contain an explicit arXiv link/tag.
- * (User requested: "Only extract citations that have arxiv links.")
- */
-export function extractArxivIdsFromReferenceLinkOnly(ref: string): string[] {
-  const out = new Set<string>()
-  const add = (id: string) => out.add(normalizeArxivId(id))
-
-  for (const m of ref.matchAll(ARXIV_URL_RE)) add(m[1])
-  // Some references include "arXiv:XXXX.XXXXX" without a URL; treat it as acceptable.
-  for (const m of ref.matchAll(ARXIV_TAG_RE)) add(m[1])
-
-  return [...out]
+function normalizePdfText(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\u00A0/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
-export function parseReferencesAndArxiv(fullText: string): ReferenceParseResult {
-  const referencesText = findReferencesSection(fullText)
-  const referenceEntries = referencesText ? splitReferenceEntries(referencesText) : []
-  const arxivIdsByRef = referenceEntries.map((ref) => ({ ref, arxivIds: extractArxivIdsFromReference(ref) }))
-  const arxivIds = [...new Set(arxivIdsByRef.flatMap((x) => x.arxivIds))]
-  return { referencesText, referenceEntries, arxivIds, arxivIdsByRef }
+function cleanupReferencesText(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line, index, arr) => !(line === "" && arr[index - 1] === ""))
+    .join("\n")
+    .trim();
 }
-
-export function tryExtractArxivIdFromPaperText(fullText: string): string | null {
-  const head = fullText.slice(0, 40_000)
-  const urlMatch = head.match(ARXIV_URL_RE)
-  if (urlMatch && urlMatch[0]) {
-    const m = urlMatch[0].match(/(\d{4}\.\d{4,5}(?:v\d+)?)/)
-    if (m?.[1]) return normalizeArxivId(m[1])
-  }
-  const tagMatch = head.match(/\barxiv\s*:\s*(\d{4}\.\d{4,5}(?:v\d+)?)\b/i)
-  if (tagMatch?.[1]) return normalizeArxivId(tagMatch[1])
-  return null
-}
-
-export function makeArxivNodeFields(arxivId: string): { arxivId: string; arxivUrl: string } {
-  const id = normalizeArxivId(arxivId)
-  return { arxivId: id, arxivUrl: arxivAbsUrlFromId(id) }
-}
-
-/** Short human-readable title/snippet from a raw reference line */
-export function titleSnippetFromReference(ref: string): string {
-  const stripped = ref.replace(/^\s*(\[\d+\]|\d+\.|\d+\))\s+/, '').trim()
-  const t = stripped.slice(0, 220)
-  return t.length < stripped.length ? `${t}…` : t
-}
-
-/**
- * Return 0+ cited-paper nodes from one reference entry.
- * - If multiple arXiv ids exist in one ref, emit one node per id.
- * - Else fall back to DOI.
- * - Else fall back to deterministic hash of the reference text.
- */
-export function buildExtractedPaperNodesFromReference(ref: string): PaperNode[] {
-  const trimmed = ref.trim()
-  if (!trimmed) return []
-
-  const title = titleSnippetFromReference(trimmed)
-  // Identifier rule: only arXiv ids are used for cited-paper nodes.
-  const arxivIds = extractArxivIdsFromReferenceLinkOnly(trimmed)
-  if (arxivIds.length > 0) {
-    return arxivIds.map((raw) => {
-      const id = normalizeArxivId(raw)
-      return {
-        id,
-        source: 'extracted',
-        read: false,
-        notes: '',
-        arxivId: id,
-        arxivUrl: arxivAbsUrlFromId(id),
-        title,
-      }
-    })
-  }
-
-  return []
-}
-

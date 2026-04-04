@@ -1,7 +1,3 @@
-/**
- * Heuristic title from first page(s) before "Abstract" / section 1.
- * PDF text order varies; this is best-effort for arXiv-style PDFs.
- */
 export function extractPaperTitleFromPdfText(pageTexts: string[]): string | undefined {
   const head = pageTexts.slice(0, 2).join('\n').slice(0, 12_000)
   const abstractIdx = head.search(/\babstract\b/i)
